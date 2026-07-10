@@ -1,0 +1,50 @@
+title: "[Idea]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        💡 Thanks for sharing an idea for **Attributor**!
+
+        Use this for open-ended proposals — a new feature, a CSV preset for a stock platform, or a workflow improvement.
+        If it's already a concrete, actionable request, an **Issue → ✨ Feature request** may be a better fit.
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: What would you like Attributor to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem it solves
+      description: What's the current limitation or pain point?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the app does this touch?
+      multiple: true
+      options:
+        - Metadata editing (XMP / EXIF / IPTC)
+        - AI auto-attribution (Ollama)
+        - CSV export / stock presets
+        - Metadata store / caching
+        - UI / themes / localization
+        - Other
+    validations:
+      required: false
+
+  - type: input
+    id: stock
+    attributes:
+      label: Stock platform (if relevant)
+      placeholder: "Shutterstock / Adobe Stock / iStock / Envato / ..."
+    validations:
+      required: false

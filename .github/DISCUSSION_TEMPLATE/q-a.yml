@@ -1,0 +1,40 @@
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        🙏 Have a question about setting up or using **Attributor**? Ask away.
+
+        Please search existing discussions first — your question may already be answered.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+      description: Describe your workflow or goal so it's easier to help.
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "Windows 11 / macOS 14 / Ubuntu 24.04"
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Attributor version
+      placeholder: "1.2.0"
+    validations:
+      required: false
