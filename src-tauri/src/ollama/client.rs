@@ -118,26 +118,53 @@ pub async fn pull(
     Ok(())
 }
 
+fn clean_folder_context(raw: &str) -> String {
+    raw.replace('_', " ").replace('-', " ").split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn clean_filename_context(raw: &str) -> String {
+    let mut parts: Vec<&str> = raw.split('_').filter(|p| !p.is_empty()).collect();
+
+    // Generated stock filenames commonly end with a timestamp and a resolution marker,
+    // e.g. Caregiver_sitting_with_happy_dogs_2K_20260916095937.
+    if parts.last().is_some_and(|p| {
+        p.len() >= 8 && p.len() <= 20 && p.chars().all(|c| c.is_ascii_digit())
+    }) {
+        parts.pop();
+    }
+    if parts.last().is_some_and(|p| {
+        matches!(p.to_ascii_lowercase().as_str(), "2k" | "4k" | "8k" | "16k")
+    }) {
+        parts.pop();
+    }
+
+    parts.join(" ").split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// One non-streaming vision inference. Returns the model's `response` string (the strict JSON text).
 pub async fn generate(cfg: &AttributionConfig, image_b64: String, image_path: &str) -> Result<String, String> {
-    // Add lightweight series context without exposing the user's full filesystem path.
-    // The image remains the primary source of truth; folder/file names are supporting hints only.
+    // Add series context without exposing the user's full filesystem path.
+    // Folder and filename describe the intended commercial series and should be used actively
+    // whenever they are compatible with the visible image.
     let path = std::path::Path::new(image_path);
-    let folder = path
+    let folder_raw = path
         .parent()
         .and_then(|p| p.file_name())
         .and_then(|s| s.to_str())
         .unwrap_or("");
-    let filename = path
+    let filename_raw = path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("");
+
+    let folder = clean_folder_context(folder_raw);
+    let filename = clean_filename_context(filename_raw);
 
     let prompt = if folder.is_empty() && filename.is_empty() {
         cfg.prompt.clone()
     } else {
         format!(
-            "{}\n\nSERIES CONTEXT:\nFolder: {}\nFilename: {}\n\nUse this context only as supporting evidence. The image itself remains the primary source of truth. Do not copy or infer concepts from folder or filename when they conflict with the visible image.",
+            "{}\n\nSERIES CONTEXT:\nFolder: {}\nFilename: {}\n\nThe folder name and filename describe the intended commercial series and are trusted contextual metadata. If the series context is compatible with what is visible in the image, actively use it when creating the title, description, and keywords. Prefer specific commercial concepts from the series context over generic visual descriptions when the image does not contradict them. Use the series context especially when selecting the first 10 keywords. Do not use a contextual concept only when the image clearly contradicts it. Do not infer geographic location such as USA solely from the folder name unless location metadata is explicitly required.",
             cfg.prompt, folder, filename
         )
     };
