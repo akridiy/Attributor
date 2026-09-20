@@ -16,6 +16,34 @@ use super::types::{AttributionConfig, AttributionResult};
 /// Best-effort extraction of the JSON payload from a model response. Lenient / cloud models often wrap
 /// the JSON in a markdown code fence (```json … ```) or surround it with prose; strip the fence and
 /// narrow to the outermost object/array span so the parser sees clean JSON.
+fn sanitize_keywords(keywords: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(25);
+    for keyword in keywords {
+        let k = keyword.trim();
+        if k.is_empty() || !k.is_ascii() {
+            continue;
+        }
+        if out.iter().any(|existing| existing.eq_ignore_ascii_case(k)) {
+            continue;
+        }
+        out.push(k.to_string());
+        if out.len() == 25 {
+            break;
+        }
+    }
+    out
+}
+
+fn keywords_need_retry(keywords: &[String]) -> bool {
+    if keywords.len() != 25 {
+        return true;
+    }
+    keywords.iter().any(|k| {
+        let trimmed = k.trim();
+        trimmed.is_empty() || !trimmed.is_ascii()
+    })
+}
+
 fn extract_json(raw: &str) -> &str {
     let mut s = raw.trim();
 
@@ -57,7 +85,7 @@ fn parse_result(raw: &str) -> Result<AttributionResult, String> {
     Ok(AttributionResult {
         title: str_field("title")?,
         description: str_field("description")?,
-        keywords: arr_field("keywords")?,
+        keywords: sanitize_keywords(arr_field("keywords")?),
         categories: arr_field("categories")?,
         editorial: bool_field("editorial"),
         mature_content: bool_field("mature_content"),
@@ -85,9 +113,37 @@ pub async fn attribute_one(
     let image = client::image_to_base64(path)?;
     let raw = tokio::select! {
         _ = cancelled(cancel) => return Err("cancelled".to_string()),
-        result = client::generate(cfg, image, path) => result?,
+        result = client::generate(cfg, image.clone(), path) => result?,
     };
-    let result = parse_result(&raw)?;
+    let mut result = parse_result(&raw)?;
+
+    // Some multilingual vision models occasionally ignore an English-only prompt and emit CJK
+    // keywords. Enforce the stock workflow at the application boundary instead of trusting the model.
+    // If sanitizing leaves anything other than exactly 25 ASCII keywords, retry once with a strict
+    // corrective instruction, then sanitize again.
+    if keywords_need_retry(&result.keywords) {
+        log::warn!(
+            "attribute keyword validation failed for {path}: {} valid English keywords; retrying once",
+            result.keywords.len()
+        );
+        let mut retry_cfg = cfg.clone();
+        retry_cfg.prompt.push_str(
+            "\n\nCRITICAL RETRY RULE: Return exactly 25 keywords. Every keyword must be English and ASCII-only. Do not use Chinese, Cyrillic, accented characters, mixed-language text, or malformed tokens. Use natural stock-buyer search phrases only."
+        );
+        let retry_raw = tokio::select! {
+            _ = cancelled(cancel) => return Err("cancelled".to_string()),
+            retry = client::generate(&retry_cfg, image, path) => retry?,
+        };
+        result = parse_result(&retry_raw)?;
+    }
+
+    if result.keywords.len() != 25 {
+        return Err(format!(
+            "model returned only {} valid English keywords after retry; expected exactly 25",
+            result.keywords.len()
+        ));
+    }
+
     log::info!(
         "attribute done: {path} → {} keywords, {} categories",
         result.keywords.len(),
