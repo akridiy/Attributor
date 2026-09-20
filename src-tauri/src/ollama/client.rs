@@ -119,10 +119,39 @@ pub async fn pull(
 }
 
 /// One non-streaming vision inference. Returns the model's `response` string (the strict JSON text).
-pub async fn generate(cfg: &AttributionConfig, image_b64: String) -> Result<String, String> {
+pub async fn generate(cfg: &AttributionConfig, image_b64: String, image_path: &str) -> Result<String, String> {
+    // Add lightweight series context without exposing the user's full filesystem path.
+    // The image remains the primary source of truth; folder/file names are supporting hints only.
+    let path = std::path::Path::new(image_path);
+    let folder = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let filename = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+
+    let prompt = if folder.is_empty() && filename.is_empty() {
+        cfg.prompt.clone()
+    } else {
+        format!(
+            "{}\n\nSERIES CONTEXT:\nFolder: {}\nFilename: {}\n\nUse this context only as supporting evidence. The image itself remains the primary source of truth. Do not copy or infer concepts from folder or filename when they conflict with the visible image.",
+            cfg.prompt, folder, filename
+        )
+    };
+    let prompt_chars = prompt.chars().count();
+
+    log::info!(
+        "ollama series context → folder={} filename={}",
+        folder,
+        filename
+    );
+
     let mut body = serde_json::json!({
         "model": cfg.model,
-        "prompt": cfg.prompt,
+        "prompt": prompt,
         "images": [image_b64],
         "stream": false,
         "format": cfg.format,
@@ -152,7 +181,7 @@ pub async fn generate(cfg: &AttributionConfig, image_b64: String) -> Result<Stri
         cfg.think,
         cfg.keep_alive,
         format_state,
-        cfg.prompt.chars().count()
+        prompt_chars
     );
 
     #[derive(Deserialize)]
