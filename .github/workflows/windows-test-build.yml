@@ -65,9 +65,9 @@ jobs:
       - name: Publish downloadable pre-release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.2.0-series-context.3
+          tag_name: v1.2.0-series-context.${{ github.run_number }}
           target_commitish: feature/series-context
-          name: Attributor 1.2.0 Series Context 3
+          name: Attributor 1.2.0 Series Context ${{ github.run_number }}
           prerelease: true
           body: |
             Custom Windows build with stronger series-context metadata.
