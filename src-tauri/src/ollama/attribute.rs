@@ -85,7 +85,7 @@ pub async fn attribute_one(
     let image = client::image_to_base64(path)?;
     let raw = tokio::select! {
         _ = cancelled(cancel) => return Err("cancelled".to_string()),
-        result = client::generate(cfg, image) => result?,
+        result = client::generate(cfg, image, path) => result?,
     };
     let result = parse_result(&raw)?;
     log::info!(
