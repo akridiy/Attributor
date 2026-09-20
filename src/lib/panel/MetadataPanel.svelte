@@ -100,7 +100,8 @@
             editorial = r.editorial;
             matureContent = r.matureContent;
             illustration = r.illustration;
-            for (const kw of r.keywords) addKeyword(kw);
+            // AI attribution is a fresh metadata pass: replace old keywords instead of merging them.
+            keywords = [...r.keywords];
             // Persist the attribution result to the store immediately (don't wait for the debounce),
             // so expensive attribution survives an app close within the debounce window (SC-002).
             await flushStore();
