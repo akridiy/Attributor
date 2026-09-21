@@ -230,7 +230,11 @@ Return compact JSON with exactly these fields:
 Rules:
 - Explicit filename roles/actions are trusted unless the image clearly contradicts them.
 - Do not upgrade filename roles. "chef" does not mean executive chef; "server" does not mean sous chef.
-- Folder context is secondary. Keep only concepts supported by the image.
+- Folder context is secondary by default, BUT if filename and folder independently describe the same commercial scenario and the image is compatible, set context_support to "high".
+- HIGH CONFIDENCE CONTEXT means the shared filename+folder scenario should become the primary commercial interpretation for title, description, and top keywords.
+- Example: filename "Manager_briefing_waiters_at_table" + folder meaning staff meetings / pre-shift instruction + image showing one central person with multiple restaurant staff taking notes => validate manager, waiters, staff briefing, pre-shift briefing, restaurant staff training/operations as the intended scenario.
+- When context_support is "high", reject contradictory alternative roles or relationships that are not supported by filename+folder+image. Example: do not call the central person a customer when filename says manager and surrounding people are waiters/staff.
+- If filename and folder do NOT reinforce each other, keep folder context soft and validate only the parts supported by the image.
 - Reject inferred professions, services, place types, relationships, diagnoses, product functions, causes, or outcomes that are not supported.
 - If an image only shows an object such as a ball, do not validate dog daycare, pet boarding, pet walking area, or staff/service concepts unless visible evidence supports them.
 - Use English only.
@@ -270,7 +274,7 @@ Rules:
     );
     final_cfg.prompt.push_str(&validated_context);
     final_cfg.prompt.push_str(
-        "\n\nFINAL ENRICHMENT RULES:\nUse the VISUAL EVIDENCE PASS as the source of truth for what is visibly present. Use trusted_filename_facts actively because they describe this exact item unless the image contradicts them. Use supported_folder_concepts only as compatible commercial context. Never use rejected_context_concepts. Do not see or infer any raw folder/filename beyond this validated context. The first 10 keywords should prioritize trusted filename facts plus the visible primary subject, action, objects, and directly supported commercial scenario. Do not upgrade roles or relationships beyond the validated context. Category must follow the primary commercial subject after combining visible facts with trusted filename facts."
+        "\n\nFINAL ENRICHMENT RULES:\nUse the VISUAL EVIDENCE PASS as the source of truth for what is visibly present. Use trusted_filename_facts actively because they describe this exact item unless the image contradicts them. Never use rejected_context_concepts. Do not see or infer any raw folder/filename beyond this validated context. If context_support is high, the combination of trusted_filename_facts + supported_folder_concepts is the PRIMARY COMMERCIAL SCENARIO and should drive the title, description, and first 10 keywords. In high-confidence cases, prefer the validated scenario over a generic literal interpretation of the image. Also suppress contradictory alternatives: if validated context says manager briefing waiters, do not describe the manager as a customer, guest, diner, or unrelated staff member. If context_support is partial, use supported_folder_concepts only as secondary enrichment. If context_support is none, ignore folder concepts entirely. The first 10 keywords should prioritize the validated scenario when high-confidence; otherwise prioritize trusted filename facts plus the visible primary subject, action, and objects. Do not upgrade roles or relationships beyond the validated context. Category must follow the primary commercial subject after combining visible facts with trusted filename facts and, when high-confidence, supported folder concepts."
     );
 
     let raw = tokio::select! {
