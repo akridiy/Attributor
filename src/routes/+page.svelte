@@ -212,6 +212,16 @@
         }
     }
 
+    async function handleBatchPathsChange(paths: string[]) {
+        batchPaths = paths;
+        panelState.selectedPaths = new Set(paths);
+        if (paths.length > 0) {
+            panelState.activePath = paths[paths.length - 1];
+            panelState.anchorPath = panelState.activePath;
+        }
+        await filesPanel?.refreshCurrentFolder?.();
+    }
+
     /** Called when selection changes (single or multi). */
     function handleSelectionChange(paths: string[]) {
         batchPaths = paths;
@@ -477,7 +487,7 @@
     >
         {#snippet renderWindow(windowId)}
             {#if windowId === 'control'}
-                <MetadataPanel bind:this={metaPanel} bind:isDirty onPathChange={handlePathChange} {batchPaths} />
+                <MetadataPanel bind:this={metaPanel} bind:isDirty onPathChange={handlePathChange} onBatchPathsChange={handleBatchPathsChange} {batchPaths} />
             {:else if windowId === 'view'}
                 <ImageViewerPanel {imageSrc} loading={viewerLoading} {goneMessage} onDismissGone={() => { goneMessage = null; }} />
             {:else if windowId === 'hierarchy'}
