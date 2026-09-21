@@ -411,6 +411,25 @@
         </div>
     </div>
 
+    <div class="quick-actions">
+        <button
+            class="quick-action quick-action--primary"
+            onclick={selectAllFiles}
+            disabled={disabled || !panelState.fileTree}
+            title="Выбрать все изображения во всех открытых папках"
+        >
+            Выбрать всё
+        </button>
+        <button
+            class="quick-action"
+            onclick={clearFilesPanel}
+            disabled={disabled || !panelState.fileTree}
+            title="Очистить окно файлов. Файлы на диске не удаляются."
+        >
+            Очистить окно
+        </button>
+    </div>
+
     {#if panelState.fileTree}
         <div class="folder-context">
             <div class="folder-context__identity" title={panelState.fileTree.path}>
@@ -421,24 +440,6 @@
                     <strong>{panelState.fileTree.name}</strong>
                     <span>{panelState.fileTree.path}</span>
                 </div>
-            </div>
-            <div class="folder-actions">
-                <button
-                    class="folder-action folder-action--primary"
-                    onclick={selectAllFiles}
-                    disabled={disabled}
-                    title="Выбрать все изображения во всех вложенных папках"
-                >
-                    Выбрать всё
-                </button>
-                <button
-                    class="folder-action"
-                    onclick={clearFilesPanel}
-                    disabled={disabled}
-                    title="Убрать открытую папку и все файлы из этого окна. Файлы на диске не удаляются."
-                >
-                    Убрать всё
-                </button>
             </div>
             <div class="selection-summary">
                 <span>Выбрано: <strong>{panelState.selectedPaths.size}</strong></span>
@@ -561,6 +562,45 @@
 
         &:hover { background: var(--hover-bg); color: $text; }
         &.active { background: $chip-bg; color: $chip-text; }
+    }
+
+    .quick-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+        padding: 7px 8px;
+        border-bottom: 1px solid $border;
+        flex-shrink: 0;
+        background: var(--panel-bg);
+    }
+
+    .quick-action {
+        @include btn-reset;
+        @include flex(row, center, center);
+        min-height: 30px;
+        padding: 5px 8px;
+        border: 1px solid $border;
+        border-radius: $radius-sm;
+        background: var(--hover-bg);
+        color: $text-secondary;
+        font-size: $fs-small;
+        font-weight: 700;
+
+        &:hover:not(:disabled) {
+            color: $text;
+            border-color: $accent;
+        }
+
+        &--primary {
+            background: $chip-bg;
+            color: $chip-text;
+            border-color: $accent;
+        }
+
+        &:disabled {
+            opacity: .4;
+            cursor: default;
+        }
     }
 
     .folder-context {
