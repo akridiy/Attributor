@@ -34,6 +34,49 @@ fn sanitize_keywords(keywords: Vec<String>) -> Vec<String> {
     out
 }
 
+fn normalize_primary_category(result: &mut AttributionResult) {
+    if result.categories.first().map(|c| c.as_str()) != Some("Interiors") {
+        return;
+    }
+
+    let title = result.title.to_ascii_lowercase();
+    let first_words = title
+        .split_whitespace()
+        .take(8)
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let living_subject = [
+        "cat ", "cats ", "dog ", "dogs ", "woman ", "man ", "person ", "people ",
+        "worker ", "doctor ", "nurse ", "caregiver ", "veterinarian ",
+    ]
+    .iter()
+    .any(|prefix| first_words.starts_with(prefix));
+
+    let obvious_pet_product = [
+        "collar", "leash", "pet accessory", "pet accessories", "pet bowl", "dog bowl",
+        "cat bowl", "pet toy", "cat toy", "dog toy",
+    ]
+    .iter()
+    .any(|term| first_words.contains(term));
+
+    if obvious_pet_product && !living_subject {
+        let pet_context = title.contains("pet ")
+            || title.contains("dog ")
+            || title.contains("cat ")
+            || result.keywords.iter().take(10).any(|k| {
+                let k = k.to_ascii_lowercase();
+                k.contains("pet ") || k.contains("dog ") || k.contains("cat ")
+            });
+
+        result.categories = if pet_context {
+            vec!["Objects".to_string(), "Animals/Wildlife".to_string()]
+        } else {
+            vec!["Objects".to_string()]
+        };
+    }
+}
+
 fn keywords_need_retry(keywords: &[String]) -> bool {
     if keywords.len() != 25 {
         return true;
@@ -82,7 +125,7 @@ fn parse_result(raw: &str) -> Result<AttributionResult, String> {
             .ok_or_else(|| format!("response missing array field '{key}'"))
     };
     let bool_field = |key: &str| -> bool { v.get(key).and_then(|x| x.as_bool()).unwrap_or(false) };
-    Ok(AttributionResult {
+    let mut result = AttributionResult {
         title: str_field("title")?,
         description: str_field("description")?,
         keywords: sanitize_keywords(arr_field("keywords")?),
@@ -90,7 +133,9 @@ fn parse_result(raw: &str) -> Result<AttributionResult, String> {
         editorial: bool_field("editorial"),
         mature_content: bool_field("mature_content"),
         illustration: bool_field("illustration"),
-    })
+    };
+    normalize_primary_category(&mut result);
+    Ok(result)
 }
 
 /// Resolve once the shared cancel flag is set (polled). Raced against the inference so a single
