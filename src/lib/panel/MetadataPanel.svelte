@@ -22,10 +22,12 @@
     let {
         isDirty = $bindable(false),
         onPathChange,
+        onBatchPathsChange,
         batchPaths = [],
     }: {
         isDirty?: boolean;
-        onPathChange?: (newPath: string) => void;
+        onPathChange?: (newPath: string) => void | Promise<void>;
+        onBatchPathsChange?: (newPaths: string[]) => void | Promise<void>;
         batchPaths?: string[];
     } = $props();
 
@@ -80,6 +82,22 @@
 
     // ── Ollama attribution ─────────────────────────────────────────────────
 
+    /** Convert a generated stock title into a filesystem-safe filename stem. */
+    function titleToFilename(titleText: string): string {
+        let stem = titleText
+            .trim()
+            .replace(/[<>:"/\\|?*\u0000-\u001F]/g, ' ')
+            .replace(/[^A-Za-z0-9]+/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_+|_+$/g, '');
+
+        if (stem.length > 140) stem = stem.slice(0, 140).replace(/_+$/g, '');
+        if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(stem)) {
+            stem = `stock_${stem}`;
+        }
+        return stem || 'stock_image';
+    }
+
     /** Single-photo attribution: fill the form from the model (overwrite text, append+dedupe keywords). */
     async function handleAttribute() {
         if (!ollama.available || !filepath) return;
@@ -95,12 +113,14 @@
         try {
             const r = await attributePhoto(filepath);
             title = r.title;
+            filename = titleToFilename(r.title);
             description = r.description;
             categories = r.categories.join(', ');
             editorial = r.editorial;
             matureContent = r.matureContent;
             illustration = r.illustration;
-            for (const kw of r.keywords) addKeyword(kw);
+            // AI attribution is a fresh metadata pass: replace old keywords instead of merging them.
+            keywords = [...r.keywords];
             // Persist the attribution result to the store immediately (don't wait for the debounce),
             // so expensive attribution survives an app close within the debounce window (SC-002).
             await flushStore();
@@ -306,6 +326,7 @@
     let batchCatMixed = $state(false);
     let batchKeywordStates = $state<{word: string; state: 'all' | 'some'}[]>([]);
     let batchOriginalUnion: Set<string> = new Set();
+    let batchKeywordsDirty = $state(false);
     let kwFileMap = $state<Map<string, string[]>>(new Map());
 
     let applyTitle = $state(false);
@@ -397,6 +418,8 @@
             word,
             state: kwSets.every(s => s.has(word)) ? 'all' : 'some',
         }));
+        // Merely viewing a multi-selection must never rewrite or delete per-file keywords.
+        batchKeywordsDirty = false;
 
         // Map keyword → basenames of files that contain it, and cache each file's metadata.
         const fileMap = new Map<string, string[]>();
@@ -436,16 +459,19 @@
         const trimmed = word.trim().toLowerCase();
         if (!trimmed || batchKeywordStates.some(s => s.word === trimmed)) return;
         batchKeywordStates = [...batchKeywordStates, {word: trimmed, state: 'all'}];
+        batchKeywordsDirty = true;
     }
 
     function promoteBatchKeyword(word: string) {
         batchKeywordStates = batchKeywordStates.map(s =>
             s.word === word ? {word, state: 'all'} : s
         );
+        batchKeywordsDirty = true;
     }
 
     function removeBatchKeyword(word: string) {
         batchKeywordStates = batchKeywordStates.filter(s => s.word !== word);
+        batchKeywordsDirty = true;
     }
 
     function handleBatchKeywordKeydown(e: KeyboardEvent) {
@@ -489,6 +515,8 @@
 
     // Compute the new keyword list for a file during batch save
     function computeNewKeywords(fileKeywords: string[]): string[] {
+        if (!batchKeywordsDirty) return [...fileKeywords];
+
         const currentWords = new Set(batchKeywordStates.map(s => s.word));
         const allWords = batchKeywordStates.filter(s => s.state === 'all').map(s => s.word);
         // Keywords that were in the original union but removed by user
@@ -504,6 +532,14 @@
         // saving before then would resolve every item to empty and overwrite files.
         if (batchLoading) return;
         const paths = [...batchPaths];
+
+        // Never save a partially loaded batch: missing cache entries would otherwise erase
+        // title/description/keywords for those files.
+        const missing = paths.filter(path => !batchFileMeta.has(path));
+        if (missing.length > 0) {
+            error(`batch save blocked: metadata cache missing for ${missing.length} file(s)`);
+            return;
+        }
         savingTotal = paths.length;
         savingCount = 0;
         batchCancelling = false;
@@ -525,10 +561,11 @@
         // Resolve each file's final metadata from data already loaded for the batch (no re-read).
         const items: Metadata[] = paths.map(path => {
             const cur = batchFileMeta.get(path);
+            const finalTitle = applyTitle ? batchTitle : (cur?.title ?? '');
             return {
                 filepath: path,
-                filename: extractStem(path),
-                title: applyTitle ? batchTitle : (cur?.title ?? ''),
+                filename: finalTitle.trim() ? titleToFilename(finalTitle) : extractStem(path),
+                title: finalTitle,
                 description: applyDescription ? batchDescription : (cur?.description ?? ''),
                 keywords: computeNewKeywords(cur?.keywords ?? []),
                 categories: applyCategories ? batchCategories : (cur?.categories ?? ''),
@@ -549,8 +586,19 @@
             handle.update({label: t('metadata.button.saveBatch.progress', {n: savingCount, total: savingTotal})});
         };
 
+        let finalPaths = paths;
         try {
-            await invoke<ItemStatus[]>('save_metadata_batch', {items, onProgress: channel});
+            const results = await invoke<ItemStatus[]>('save_metadata_batch', {items, onProgress: channel});
+            finalPaths = results.map((result, index) =>
+                result.kind === 'ok' ? result.path : paths[index]
+            );
+
+            // Renaming changes path identity. Move the selection immediately to the actual new paths
+            // so the next metadata read does not target deleted old filenames.
+            panelState.selectedPaths = new Set(finalPaths);
+            panelState.activePath = finalPaths[finalPaths.length - 1] ?? '';
+            panelState.anchorPath = panelState.activePath;
+            await onBatchPathsChange?.(finalPaths);
         } catch (e) {
             error(`batch save failed: ${e}`);
         }
@@ -558,8 +606,8 @@
         handle.done();
         savingTotal = 0;
         batchCancelling = false;
-        // Reload to reflect saved state
-        loadBatchData(batchPaths);
+        // Reload from the paths that actually exist after rename.
+        loadBatchData(finalPaths);
         // Keep the watcher-rescan guard armed briefly: the folder-changed events for our own
         // writes are delivered AFTER this call resolves, so clearing synchronously would let
         // them trigger a redundant full rescan / thumbnail-pipeline restart (FR-008).
@@ -682,9 +730,19 @@
     }
 
     async function doSave(): Promise<string> {
+        const originalStem = extractStem(filepath);
+        const currentStem = filename.trim().replace(/\.[^/.]+$/, '');
+        const saveStem =
+            currentStem && currentStem !== originalStem
+                ? currentStem
+                : (title.trim() ? titleToFilename(title) : currentStem);
+
+        // Reflect the name that will actually be written so the UI is never misleading.
+        filename = saveStem;
+
         const metadata: Metadata = {
             filepath,
-            filename: filename.trim().replace(/\.[^/.]+$/, ''),
+            filename: saveStem,
             title,
             description,
             keywords,
@@ -705,7 +763,7 @@
         snapshot = captureSnapshot();
 
         if (newPath !== prevFilepath) {
-            onPathChange?.(newPath);
+            await onPathChange?.(newPath);
         }
 
         return newPath;

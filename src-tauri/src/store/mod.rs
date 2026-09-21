@@ -339,16 +339,9 @@ fn attribute_app_only(conn: &Mutex<Connection>, path: &str, model: &StoredMetada
     {
         let c = conn.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(rec) = read_record(&c, path)? {
-            meta.release_filename = rec.meta.release_filename; // preserved (model doesn't produce it)
-            // Merge keywords: keep the existing ones, append the model's new ones (case-insensitive dedupe).
-            let mut keywords = rec.meta.keywords;
-            for kw in &model.keywords {
-                let k = kw.trim();
-                if !k.is_empty() && !keywords.iter().any(|e| e.eq_ignore_ascii_case(k)) {
-                    keywords.push(k.to_string());
-                }
-            }
-            meta.keywords = keywords;
+            // Preserve only store-only metadata. AI attribution intentionally replaces title,
+            // description, keywords, categories and content flags with the fresh model result.
+            meta.release_filename = rec.meta.release_filename;
         }
     }
     persist_app_only(conn, path, &meta)

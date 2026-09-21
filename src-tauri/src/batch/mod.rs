@@ -53,7 +53,7 @@ pub(crate) fn save_one(item: SaveRequest) -> Result<String, String> {
         Path::new(s).file_stem().and_then(|s| s.to_str()).unwrap_or(s).to_string()
     };
 
-    let final_path = if !new_stem.is_empty() && new_stem != orig_stem {
+    let mut final_path = if !new_stem.is_empty() && new_stem != orig_stem {
         let ext = orig_path.extension().and_then(|e| e.to_str()).unwrap_or("");
         let new_name = if ext.is_empty() {
             new_stem.clone()
@@ -66,29 +66,43 @@ pub(crate) fn save_one(item: SaveRequest) -> Result<String, String> {
     };
 
     if final_path != orig_path {
-        // Atomically create the new file (O_CREAT|O_EXCL), copy original bytes,
-        // splice metadata into the copy, then delete the original.
+        // Atomically create the renamed copy. If another selected file resolves to the same title
+        // (or the target already exists from an earlier run), choose a stable numeric suffix instead
+        // of failing the whole batch.
         use std::io::Write as _;
-        {
-            let mut src = std::fs::File::open(orig_path).map_err(|e| e.to_string())?;
-            let mut dst = std::fs::OpenOptions::new()
+        let ext = orig_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let parent = orig_path.parent().unwrap_or(orig_path);
+        let mut attempt: u32 = 1;
+
+        let mut src = std::fs::File::open(orig_path).map_err(|e| e.to_string())?;
+        loop {
+            match std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(&final_path)
-                .map_err(|e| {
-                    let msg = if e.kind() == std::io::ErrorKind::AlreadyExists {
-                        format!(
-                            "File already exists: {}",
-                            final_path.file_name().unwrap_or_default().to_string_lossy()
-                        )
+            {
+                Ok(mut dst) => {
+                    std::io::copy(&mut src, &mut dst).map_err(|e| e.to_string())?;
+                    dst.flush().map_err(|e| e.to_string())?;
+                    break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    attempt += 1;
+                    if attempt > 9999 {
+                        return Err(format!("Could not create a unique filename for {new_stem}"));
+                    }
+                    let candidate = if ext.is_empty() {
+                        format!("{}_{}", new_stem, attempt)
                     } else {
-                        e.to_string()
+                        format!("{}_{}.{}", new_stem, attempt, ext)
                     };
-                    error!("Failed to create {}: {msg}", final_path.display());
-                    msg
-                })?;
-            std::io::copy(&mut src, &mut dst).map_err(|e| e.to_string())?;
-            dst.flush().map_err(|e| e.to_string())?;
+                    final_path = parent.join(candidate);
+                }
+                Err(e) => {
+                    error!("Failed to create {}: {e}", final_path.display());
+                    return Err(e.to_string());
+                }
+            }
         }
 
         crate::photo::write_metadata(final_path.to_string_lossy().to_string(), meta)?;

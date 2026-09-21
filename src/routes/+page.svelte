@@ -185,11 +185,13 @@
         saveAppState({lastFolder: path});
     }
 
-    /** Update viewer when the file was renamed during save. */
-    function handlePathChange(newPath: string) {
+    /** Update the tree, selection and viewer atomically after a rename. */
+    async function handlePathChange(newPath: string) {
         currentPath = newPath;
-        showInViewer(newPath);
+        await filesPanel?.refreshCurrentFolder?.([newPath]);
         filesPanel?.setSelectedPath(newPath);
+        await showInViewer(newPath);
+        saveAppState({lastFile: newPath});
     }
 
     /** Actually open a file: load into metadata panel + show in viewer. */
@@ -209,6 +211,22 @@
             showDialog = true;
         } else {
             await openFile(path);
+        }
+    }
+
+    async function handleBatchPathsChange(paths: string[]) {
+        // First rebuild the visible tree from disk using the new filenames returned by the backend.
+        // Only after that expose the paths as the current batch selection.
+        const refreshed = await filesPanel?.refreshCurrentFolder?.(paths);
+        const existing = Array.isArray(refreshed) && refreshed.length > 0 ? refreshed : paths;
+
+        batchPaths = existing;
+        panelState.selectedPaths = new Set(existing);
+        if (existing.length > 0) {
+            panelState.activePath = existing[existing.length - 1];
+            panelState.anchorPath = panelState.activePath;
+            currentPath = panelState.activePath;
+            await showInViewer(panelState.activePath);
         }
     }
 
@@ -477,7 +495,7 @@
     >
         {#snippet renderWindow(windowId)}
             {#if windowId === 'control'}
-                <MetadataPanel bind:this={metaPanel} bind:isDirty onPathChange={handlePathChange} {batchPaths} />
+                <MetadataPanel bind:this={metaPanel} bind:isDirty onPathChange={handlePathChange} onBatchPathsChange={handleBatchPathsChange} {batchPaths} />
             {:else if windowId === 'view'}
                 <ImageViewerPanel {imageSrc} loading={viewerLoading} {goneMessage} onDismissGone={() => { goneMessage = null; }} />
             {:else if windowId === 'hierarchy'}
