@@ -26,8 +26,8 @@
         batchPaths = [],
     }: {
         isDirty?: boolean;
-        onPathChange?: (newPath: string) => void;
-        onBatchPathsChange?: (newPaths: string[]) => void;
+        onPathChange?: (newPath: string) => void | Promise<void>;
+        onBatchPathsChange?: (newPaths: string[]) => void | Promise<void>;
         batchPaths?: string[];
     } = $props();
 
@@ -598,7 +598,7 @@
             panelState.selectedPaths = new Set(finalPaths);
             panelState.activePath = finalPaths[finalPaths.length - 1] ?? '';
             panelState.anchorPath = panelState.activePath;
-            onBatchPathsChange?.(finalPaths);
+            await onBatchPathsChange?.(finalPaths);
         } catch (e) {
             error(`batch save failed: ${e}`);
         }
@@ -763,7 +763,7 @@
         snapshot = captureSnapshot();
 
         if (newPath !== prevFilepath) {
-            onPathChange?.(newPath);
+            await onPathChange?.(newPath);
         }
 
         return newPath;
