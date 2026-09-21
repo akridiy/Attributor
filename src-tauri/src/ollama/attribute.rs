@@ -203,19 +203,79 @@ Rules:
     };
     let visual_facts = extract_json(&visual_facts_raw).to_string();
 
-    // Stage 2: final metadata. The visual-evidence pass is authoritative.
+    // Stage 2: validate filename/folder context against the visual evidence.
+    // Filename is strong item-specific context; folder is softer series/global context.
+    let (folder_context, filename_context) = client::series_context(path);
+    let mut context_cfg = cfg.clone();
+    context_cfg.prompt = format!(
+        r#"You are validating contextual metadata against an image evidence summary.
+
+VISUAL EVIDENCE:
+{}
+
+FILENAME CONTEXT (strong, item-specific):
+{}
+
+FOLDER CONTEXT (soft, series/global):
+{}
+
+Return compact JSON with exactly these fields:
+{{
+  "trusted_filename_facts": ["explicit filename roles, objects, or actions that are not contradicted by the image"],
+  "supported_folder_concepts": ["folder concepts that are genuinely compatible with the visual evidence"],
+  "rejected_context_concepts": ["folder/filename concepts that would be unsupported, over-specific, or contradictory"],
+  "context_support": "high|partial|none"
+}}
+
+Rules:
+- Explicit filename roles/actions are trusted unless the image clearly contradicts them.
+- Do not upgrade filename roles. "chef" does not mean executive chef; "server" does not mean sous chef.
+- Folder context is secondary. Keep only concepts supported by the image.
+- Reject inferred professions, services, place types, relationships, diagnoses, product functions, causes, or outcomes that are not supported.
+- If an image only shows an object such as a ball, do not validate dog daycare, pet boarding, pet walking area, or staff/service concepts unless visible evidence supports them.
+- Use English only.
+"#,
+        visual_facts, filename_context, folder_context
+    );
+    context_cfg.format = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "trusted_filename_facts": {"type":"array","items":{"type":"string"}},
+            "supported_folder_concepts": {"type":"array","items":{"type":"string"}},
+            "rejected_context_concepts": {"type":"array","items":{"type":"string"}},
+            "context_support": {"type":"string","enum":["high","partial","none"]}
+        },
+        "required": [
+            "trusted_filename_facts","supported_folder_concepts",
+            "rejected_context_concepts","context_support"
+        ]
+    });
+
+    let validated_context_raw = tokio::select! {
+        _ = cancelled(cancel) => return Err("cancelled".to_string()),
+        result = client::generate(&context_cfg, image.clone(), path, false) => result?,
+    };
+    let validated_context = extract_json(&validated_context_raw).to_string();
+
+    // Stage 3: final metadata. Feed only visual facts + validated context.
+    // Raw folder/filename are deliberately NOT appended to this request.
+
     let mut final_cfg = cfg.clone();
     final_cfg.prompt.push_str(
         "\n\nVISUAL EVIDENCE PASS (AUTHORITATIVE):\n"
     );
     final_cfg.prompt.push_str(&visual_facts);
     final_cfg.prompt.push_str(
-        "\n\nFINAL ENRICHMENT RULES:\nUse the VISUAL EVIDENCE PASS as the source of truth for what is actually visible. Series context may only refine or enrich a compatible commercial interpretation. It must not introduce unsupported services, professions, settings, relationships, functions, causes, diagnoses or outcomes. No more than 5 of the final 25 keyword concepts may come primarily from series context. The first 10 keywords should be dominated by the visible primary subject, visible action, visible objects and directly supported commercial scenario. Category must follow the primary visible commercial subject, not the folder name."
+        "\n\nVALIDATED CONTEXT:\n"
+    );
+    final_cfg.prompt.push_str(&validated_context);
+    final_cfg.prompt.push_str(
+        "\n\nFINAL ENRICHMENT RULES:\nUse the VISUAL EVIDENCE PASS as the source of truth for what is visibly present. Use trusted_filename_facts actively because they describe this exact item unless the image contradicts them. Use supported_folder_concepts only as compatible commercial context. Never use rejected_context_concepts. Do not see or infer any raw folder/filename beyond this validated context. The first 10 keywords should prioritize trusted filename facts plus the visible primary subject, action, objects, and directly supported commercial scenario. Do not upgrade roles or relationships beyond the validated context. Category must follow the primary commercial subject after combining visible facts with trusted filename facts."
     );
 
     let raw = tokio::select! {
         _ = cancelled(cancel) => return Err("cancelled".to_string()),
-        result = client::generate(&final_cfg, image.clone(), path, true) => result?,
+        result = client::generate(&final_cfg, image.clone(), path, false) => result?,
     };
     let mut result = parse_result(&raw)?;
 
@@ -228,13 +288,13 @@ Rules:
             "attribute keyword validation failed for {path}: {} valid English keywords; retrying once",
             result.keywords.len()
         );
-        let mut retry_cfg = cfg.clone();
+        let mut retry_cfg = final_cfg.clone();
         retry_cfg.prompt.push_str(
             "\n\nCRITICAL RETRY RULE: Return exactly 25 keywords. Every keyword must be English and ASCII-only. Do not use Chinese, Cyrillic, accented characters, mixed-language text, or malformed tokens. Use natural stock-buyer search phrases only."
         );
         let retry_raw = tokio::select! {
             _ = cancelled(cancel) => return Err("cancelled".to_string()),
-            retry = client::generate(&retry_cfg, image, path, true) => retry?,
+            retry = client::generate(&retry_cfg, image, path, false) => retry?,
         };
         result = parse_result(&retry_raw)?;
     }
