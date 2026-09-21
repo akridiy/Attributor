@@ -156,9 +156,66 @@ pub async fn attribute_one(
     log::info!("attribute start: {path} (model {})", cfg.model);
     client::ensure_running(&cfg.base_url).await?;
     let image = client::image_to_base64(path)?;
+
+    // Stage 1: visual evidence only. Do not expose folder or filename context yet.
+    // This creates an explicit evidence summary that the final stock-metadata pass must obey.
+    let mut facts_cfg = cfg.clone();
+    facts_cfg.prompt = r#"Analyze only what is visibly present in this image. Ignore any filename, folder, series, or project context.
+
+Return concise JSON with exactly these fields:
+{
+  "primary_subject": "short noun phrase",
+  "visible_action": "short factual phrase or empty string",
+  "visible_objects": ["..."],
+  "visible_people_animals": ["..."],
+  "visible_setting": "short factual phrase",
+  "supported_commercial_scenarios": ["only scenarios directly supported by the image"],
+  "unsupported_inferences_to_avoid": ["professions, services, locations, relationships, causes, functions or outcomes that are not visually proven"]
+}
+
+Rules:
+- Use English only.
+- Be conservative and factual.
+- Do not infer services, professions, business types, diagnoses, product functions, locations or relationships unless the image clearly supports them.
+- Do not use marketing language.
+- Keep the JSON compact.
+"#.to_string();
+    facts_cfg.format = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "primary_subject": {"type":"string"},
+            "visible_action": {"type":"string"},
+            "visible_objects": {"type":"array","items":{"type":"string"}},
+            "visible_people_animals": {"type":"array","items":{"type":"string"}},
+            "visible_setting": {"type":"string"},
+            "supported_commercial_scenarios": {"type":"array","items":{"type":"string"}},
+            "unsupported_inferences_to_avoid": {"type":"array","items":{"type":"string"}}
+        },
+        "required": [
+            "primary_subject","visible_action","visible_objects","visible_people_animals",
+            "visible_setting","supported_commercial_scenarios","unsupported_inferences_to_avoid"
+        ]
+    });
+
+    let visual_facts_raw = tokio::select! {
+        _ = cancelled(cancel) => return Err("cancelled".to_string()),
+        result = client::generate(&facts_cfg, image.clone(), path, false) => result?,
+    };
+    let visual_facts = extract_json(&visual_facts_raw).to_string();
+
+    // Stage 2: final metadata. The visual-evidence pass is authoritative.
+    let mut final_cfg = cfg.clone();
+    final_cfg.prompt.push_str(
+        "\n\nVISUAL EVIDENCE PASS (AUTHORITATIVE):\n"
+    );
+    final_cfg.prompt.push_str(&visual_facts);
+    final_cfg.prompt.push_str(
+        "\n\nFINAL ENRICHMENT RULES:\nUse the VISUAL EVIDENCE PASS as the source of truth for what is actually visible. Series context may only refine or enrich a compatible commercial interpretation. It must not introduce unsupported services, professions, settings, relationships, functions, causes, diagnoses or outcomes. No more than 5 of the final 25 keyword concepts may come primarily from series context. The first 10 keywords should be dominated by the visible primary subject, visible action, visible objects and directly supported commercial scenario. Category must follow the primary visible commercial subject, not the folder name."
+    );
+
     let raw = tokio::select! {
         _ = cancelled(cancel) => return Err("cancelled".to_string()),
-        result = client::generate(cfg, image.clone(), path) => result?,
+        result = client::generate(&final_cfg, image.clone(), path, true) => result?,
     };
     let mut result = parse_result(&raw)?;
 
@@ -177,7 +234,7 @@ pub async fn attribute_one(
         );
         let retry_raw = tokio::select! {
             _ = cancelled(cancel) => return Err("cancelled".to_string()),
-            retry = client::generate(&retry_cfg, image, path) => retry?,
+            retry = client::generate(&retry_cfg, image, path, true) => retry?,
         };
         result = parse_result(&retry_raw)?;
     }
