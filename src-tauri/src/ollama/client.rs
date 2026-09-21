@@ -142,7 +142,12 @@ fn clean_filename_context(raw: &str) -> String {
 }
 
 /// One non-streaming vision inference. Returns the model's `response` string (the strict JSON text).
-pub async fn generate(cfg: &AttributionConfig, image_b64: String, image_path: &str) -> Result<String, String> {
+pub async fn generate(
+    cfg: &AttributionConfig,
+    image_b64: String,
+    image_path: &str,
+    include_series_context: bool,
+) -> Result<String, String> {
     // Add series context without exposing the user's full filesystem path.
     // Folder and filename describe the intended commercial series and should be used actively
     // whenever they are compatible with the visible image.
@@ -160,21 +165,25 @@ pub async fn generate(cfg: &AttributionConfig, image_b64: String, image_path: &s
     let folder = clean_folder_context(folder_raw);
     let filename = clean_filename_context(filename_raw);
 
-    let prompt = if folder.is_empty() && filename.is_empty() {
+    let prompt = if !include_series_context || (folder.is_empty() && filename.is_empty()) {
         cfg.prompt.clone()
     } else {
         format!(
-            "{}\n\nSERIES CONTEXT:\nFolder: {}\nFilename: {}\n\nThe folder name and filename describe the intended commercial series and are trusted contextual metadata. If the series context is compatible with what is visible in the image, actively use it when creating the title, description, and keywords. Prefer specific commercial concepts from the series context over generic visual descriptions when the image does not contradict them. Use the series context especially when selecting the first 10 keywords. When the series context clearly identifies the commercial scenario, prioritize that scenario over incidental decor, furniture, flooring, shelves, room style, or other background details. Do not spend keyword slots on minor environment details unless buyers would realistically search for them. Avoid contradictory framing: for example, do not describe a scene as a home or living room when the trusted series context indicates a daycare, clinic, workshop, office, facility, or other professional setting, unless the image clearly shows a private home. Prefer standard buyer search phrases and natural nouns such as pet caregiver, dog boarding service, canine socialization, animal care professional, group of dogs. Avoid awkward generated phrases such as pet caregiver sitting, happy dogs group, toys shelf, or similar literal combinations that are unlikely buyer searches. Do not invent unsupported object functions: for example, if a bowl is visible but its contents or purpose are unclear, prefer pet bowl over cat food bowl or cat water bowl. Avoid weak marketing-style or vague phrases such as comfort zone, wellness center, premium lifestyle, cozy atmosphere, modern living, or similar filler unless they describe a clearly visible and commercially searchable concept. PRIMARY SUBJECT OVERRIDES SERIES CONTEXT: first identify what the image is mainly selling visually. The series context explains intended use, but it must not turn a product-only image into a service scene or a background into the subject. If the main visible subject is a product or accessory such as a collar, leash, bowl, toy, pet accessory, tool, device, or other standalone object, describe and keyword that object first. Use the series context only to add accurate usage context such as pet boarding or daycare. Do not infer pet grooming, pet socialization, dog owner, pet store, animal shelter, training, or other services unless those activities or settings are actually supported by the image. For product/object images, do not spend keyword slots on incidental decor such as wooden counter, modern interior, clean room, indoor plant, large window, wooden furniture, floor, wall, shelf, or similar background details unless that background is itself commercially important. CATEGORY PRIORITY: choose categories from the PRIMARY VISIBLE COMMERCIAL SUBJECT, not from incidental architecture or from the series folder alone. If a standalone product/accessory is the main visible subject, prefer Objects. If animals themselves are the main visible subject, prefer Animals/Wildlife. If an animal-care service with people/animals is the main subject, prefer Animals/Wildlife and optionally People when appropriate. If a medical procedure is the main subject, prefer Healthcare/Medical. If repair, construction, machinery, or a trade service is the main subject, prefer Industrial. Use Interiors only when the interior space itself is the primary stock subject. When two categories are allowed, put the primary commercial subject first and use the environment only as a secondary category when genuinely useful. Do not use a contextual concept only when the image clearly contradicts it. Do not infer geographic location such as USA solely from the folder name unless location metadata is explicitly required.",
+            "{}\n\nSERIES CONTEXT:\nFolder: {}\nFilename: {}\n\nCONTEXT ENRICHMENT RULES:\nThe SERIES CONTEXT is secondary evidence only. The separate VISUAL EVIDENCE PASS in the prompt is authoritative for what is actually visible. Use folder/filename context only to clarify a commercial scenario that is compatible with the visual evidence. Never let the series context override, contradict, or invent visible facts. Do not infer a profession, service, activity, place type, relationship, diagnosis, cause, or product function solely from the folder or filename. The series context may contribute at most 5 distinct keyword concepts that are not already directly supported by the visual evidence. At least 20 of the 25 keywords should be grounded directly in the visual evidence or be straightforward stock-search synonyms of those visible facts. Do not use the context to determine the category by itself; choose categories from the primary visible commercial subject. If the main visible subject is a standalone product/accessory, prefer Objects. If animals are the main visible subject, prefer Animals/Wildlife. If a medical procedure is visible, prefer Healthcare/Medical. If repair, construction, machinery, or a trade service is visible, prefer Industrial. Use Interiors only when the interior space itself is the primary stock subject. Do not spend keyword slots on incidental decor, furniture, flooring, windows, plants, shelves, counters, walls, or room style unless those details are commercially important to the image. Do not infer geographic location such as USA solely from the folder name.",
             cfg.prompt, folder, filename
         )
     };
     let prompt_chars = prompt.chars().count();
 
-    log::info!(
-        "ollama series context → folder={} filename={}",
-        folder,
-        filename
-    );
+    if include_series_context {
+        log::info!(
+            "ollama series context → folder={} filename={}",
+            folder,
+            filename
+        );
+    } else {
+        log::info!("ollama visual-evidence pass → series context disabled");
+    }
 
     let mut body = serde_json::json!({
         "model": cfg.model,
