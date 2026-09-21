@@ -253,6 +253,74 @@ pub async fn generate(
     Ok(g.response)
 }
 
+
+/// One non-streaming text-only inference using the same model/profile/options as vision generation.
+/// Used after the first visual pass so we don't resend and reprocess the image for context validation
+/// and final metadata generation.
+pub async fn generate_text(cfg: &AttributionConfig) -> Result<String, String> {
+    let prompt_chars = cfg.prompt.chars().count();
+
+    let mut body = serde_json::json!({
+        "model": cfg.model,
+        "prompt": cfg.prompt,
+        "stream": false,
+        "format": cfg.format,
+    });
+    let obj = body.as_object_mut().ok_or("internal: request body is not an object")?;
+    if !cfg.options.is_null() {
+        obj.insert("options".into(), cfg.options.clone());
+    }
+    if let Some(think) = &cfg.think {
+        obj.insert("think".into(), serde_json::to_value(think).map_err(|e| e.to_string())?);
+    }
+    if let Some(keep_alive) = &cfg.keep_alive {
+        obj.insert("keep_alive".into(), serde_json::Value::String(keep_alive.clone()));
+    }
+
+    let format_state = match cfg.format.as_object() {
+        Some(o) if !o.is_empty() => "set",
+        _ => "none",
+    };
+    log::info!(
+        "ollama text generate → model={} options={} think={:?} keepAlive={:?} format={} promptChars={}",
+        cfg.model,
+        cfg.options,
+        cfg.think,
+        cfg.keep_alive,
+        format_state,
+        prompt_chars
+    );
+
+    #[derive(Deserialize)]
+    struct Gen {
+        response: String,
+    }
+
+    let url = format!("{}/api/generate", base(&cfg.base_url));
+    let resp = http()
+        .post(&url)
+        .json(&body)
+        .timeout(Duration::from_secs(600))
+        .send()
+        .await
+        .map_err(|e| format!("Ollama not reachable: {e}"))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let detail = resp.text().await.unwrap_or_default();
+        return Err(format!("Ollama returned {status}: {}", detail.trim()));
+    }
+
+    let g: Gen = resp.json().await.map_err(|e| e.to_string())?;
+    log::info!(
+        "ollama text generate ← model={} responseChars={}",
+        cfg.model,
+        g.response.chars().count()
+    );
+    log::debug!("ollama text generate raw response: {}", g.response);
+    Ok(g.response)
+}
+
 /// Read an image file and base64-encode it for the `images` array (standard engine, no data: prefix).
 pub fn image_to_base64(path: &str) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
