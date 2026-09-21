@@ -22,10 +22,12 @@
     let {
         isDirty = $bindable(false),
         onPathChange,
+        onBatchPathsChange,
         batchPaths = [],
     }: {
         isDirty?: boolean;
         onPathChange?: (newPath: string) => void;
+        onBatchPathsChange?: (newPaths: string[]) => void;
         batchPaths?: string[];
     } = $props();
 
@@ -596,6 +598,7 @@
             panelState.selectedPaths = new Set(finalPaths);
             panelState.activePath = finalPaths[finalPaths.length - 1] ?? '';
             panelState.anchorPath = panelState.activePath;
+            onBatchPathsChange?.(finalPaths);
         } catch (e) {
             error(`batch save failed: ${e}`);
         }
