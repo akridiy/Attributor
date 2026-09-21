@@ -324,6 +324,7 @@
     let batchCatMixed = $state(false);
     let batchKeywordStates = $state<{word: string; state: 'all' | 'some'}[]>([]);
     let batchOriginalUnion: Set<string> = new Set();
+    let batchKeywordsDirty = $state(false);
     let kwFileMap = $state<Map<string, string[]>>(new Map());
 
     let applyTitle = $state(false);
@@ -415,6 +416,8 @@
             word,
             state: kwSets.every(s => s.has(word)) ? 'all' : 'some',
         }));
+        // Merely viewing a multi-selection must never rewrite or delete per-file keywords.
+        batchKeywordsDirty = false;
 
         // Map keyword → basenames of files that contain it, and cache each file's metadata.
         const fileMap = new Map<string, string[]>();
@@ -454,16 +457,19 @@
         const trimmed = word.trim().toLowerCase();
         if (!trimmed || batchKeywordStates.some(s => s.word === trimmed)) return;
         batchKeywordStates = [...batchKeywordStates, {word: trimmed, state: 'all'}];
+        batchKeywordsDirty = true;
     }
 
     function promoteBatchKeyword(word: string) {
         batchKeywordStates = batchKeywordStates.map(s =>
             s.word === word ? {word, state: 'all'} : s
         );
+        batchKeywordsDirty = true;
     }
 
     function removeBatchKeyword(word: string) {
         batchKeywordStates = batchKeywordStates.filter(s => s.word !== word);
+        batchKeywordsDirty = true;
     }
 
     function handleBatchKeywordKeydown(e: KeyboardEvent) {
@@ -507,6 +513,8 @@
 
     // Compute the new keyword list for a file during batch save
     function computeNewKeywords(fileKeywords: string[]): string[] {
+        if (!batchKeywordsDirty) return [...fileKeywords];
+
         const currentWords = new Set(batchKeywordStates.map(s => s.word));
         const allWords = batchKeywordStates.filter(s => s.state === 'all').map(s => s.word);
         // Keywords that were in the original union but removed by user
@@ -522,6 +530,14 @@
         // saving before then would resolve every item to empty and overwrite files.
         if (batchLoading) return;
         const paths = [...batchPaths];
+
+        // Never save a partially loaded batch: missing cache entries would otherwise erase
+        // title/description/keywords for those files.
+        const missing = paths.filter(path => !batchFileMeta.has(path));
+        if (missing.length > 0) {
+            error(`batch save blocked: metadata cache missing for ${missing.length} file(s)`);
+            return;
+        }
         savingTotal = paths.length;
         savingCount = 0;
         batchCancelling = false;
@@ -568,8 +584,18 @@
             handle.update({label: t('metadata.button.saveBatch.progress', {n: savingCount, total: savingTotal})});
         };
 
+        let finalPaths = paths;
         try {
-            await invoke<ItemStatus[]>('save_metadata_batch', {items, onProgress: channel});
+            const results = await invoke<ItemStatus[]>('save_metadata_batch', {items, onProgress: channel});
+            finalPaths = results.map((result, index) =>
+                result.kind === 'ok' ? result.path : paths[index]
+            );
+
+            // Renaming changes path identity. Move the selection immediately to the actual new paths
+            // so the next metadata read does not target deleted old filenames.
+            panelState.selectedPaths = new Set(finalPaths);
+            panelState.activePath = finalPaths[finalPaths.length - 1] ?? '';
+            panelState.anchorPath = panelState.activePath;
         } catch (e) {
             error(`batch save failed: ${e}`);
         }
@@ -577,8 +603,8 @@
         handle.done();
         savingTotal = 0;
         batchCancelling = false;
-        // Reload to reflect saved state
-        loadBatchData(batchPaths);
+        // Reload from the paths that actually exist after rename.
+        loadBatchData(finalPaths);
         // Keep the watcher-rescan guard armed briefly: the folder-changed events for our own
         // writes are delivered AFTER this call resolves, so clearing synchronously would let
         // them trigger a redundant full rescan / thumbnail-pipeline restart (FR-008).
