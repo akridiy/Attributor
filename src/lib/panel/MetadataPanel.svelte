@@ -543,10 +543,11 @@
         // Resolve each file's final metadata from data already loaded for the batch (no re-read).
         const items: Metadata[] = paths.map(path => {
             const cur = batchFileMeta.get(path);
+            const finalTitle = applyTitle ? batchTitle : (cur?.title ?? '');
             return {
                 filepath: path,
-                filename: extractStem(path),
-                title: applyTitle ? batchTitle : (cur?.title ?? ''),
+                filename: finalTitle.trim() ? titleToFilename(finalTitle) : extractStem(path),
+                title: finalTitle,
                 description: applyDescription ? batchDescription : (cur?.description ?? ''),
                 keywords: computeNewKeywords(cur?.keywords ?? []),
                 categories: applyCategories ? batchCategories : (cur?.categories ?? ''),
@@ -700,9 +701,19 @@
     }
 
     async function doSave(): Promise<string> {
+        const originalStem = extractStem(filepath);
+        const currentStem = filename.trim().replace(/\.[^/.]+$/, '');
+        const saveStem =
+            currentStem && currentStem !== originalStem
+                ? currentStem
+                : (title.trim() ? titleToFilename(title) : currentStem);
+
+        // Reflect the name that will actually be written so the UI is never misleading.
+        filename = saveStem;
+
         const metadata: Metadata = {
             filepath,
-            filename: filename.trim().replace(/\.[^/.]+$/, ''),
+            filename: saveStem,
             title,
             description,
             keywords,
