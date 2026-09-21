@@ -141,16 +141,7 @@ fn clean_filename_context(raw: &str) -> String {
     parts.join(" ").split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// One non-streaming vision inference. Returns the model's `response` string (the strict JSON text).
-pub async fn generate(
-    cfg: &AttributionConfig,
-    image_b64: String,
-    image_path: &str,
-    include_series_context: bool,
-) -> Result<String, String> {
-    // Add series context without exposing the user's full filesystem path.
-    // Folder and filename describe the intended commercial series and should be used actively
-    // whenever they are compatible with the visible image.
+pub fn series_context(image_path: &str) -> (String, String) {
     let path = std::path::Path::new(image_path);
     let folder_raw = path
         .parent()
@@ -162,8 +153,24 @@ pub async fn generate(
         .and_then(|s| s.to_str())
         .unwrap_or("");
 
-    let folder = clean_folder_context(folder_raw);
-    let filename = clean_filename_context(filename_raw);
+    (
+        clean_folder_context(folder_raw),
+        clean_filename_context(filename_raw),
+    )
+}
+
+
+/// One non-streaming vision inference. Returns the model's `response` string (the strict JSON text).
+pub async fn generate(
+    cfg: &AttributionConfig,
+    image_b64: String,
+    image_path: &str,
+    include_series_context: bool,
+) -> Result<String, String> {
+    // Add series context without exposing the user's full filesystem path.
+    // Folder and filename describe the intended commercial series and should be used actively
+    // whenever they are compatible with the visible image.
+    let (folder, filename) = series_context(image_path);
 
     let prompt = if !include_series_context || (folder.is_empty() && filename.is_empty()) {
         cfg.prompt.clone()
