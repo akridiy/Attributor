@@ -253,6 +253,39 @@
         if (refreshTimer) clearTimeout(refreshTimer);
     });
 
+    function allImagePaths(node: FileNode): string[] {
+        const out: string[] = [];
+        function walk(n: FileNode) {
+            if (!n.is_dir && isImageFile(n.name)) out.push(n.path);
+            for (const child of n.children) walk(child);
+        }
+        walk(node);
+        return out;
+    }
+
+    function selectAllFiles() {
+        const tree = panelState.fileTree;
+        if (!tree || disabled) return;
+        const paths = allImagePaths(tree);
+        panelState.selectedPaths = new Set(paths);
+        if (paths.length > 0) {
+            panelState.activePath = paths[0];
+            panelState.anchorPath = paths[0];
+            onFileSelect(paths[0]);
+        }
+        onSelectionChange?.(paths);
+    }
+
+    function clearFilesPanel() {
+        panelState.fileTree = null;
+        panelState.selectedPaths = new Set();
+        panelState.activePath = '';
+        panelState.anchorPath = '';
+        panelState.readyThumbs.clear();
+        onSelectionChange?.([]);
+        onFileGone?.();
+    }
+
     // ── Actions ──────────────────────────────────────────────────────────
 
     async function openFolder() {
@@ -378,6 +411,42 @@
         </div>
     </div>
 
+    {#if panelState.fileTree}
+        <div class="folder-context">
+            <div class="folder-context__identity" title={panelState.fileTree.path}>
+                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                    <path d="M1.5 3A1.5 1.5 0 0 0 0 4.5v8A1.5 1.5 0 0 0 1.5 14h13a1.5 1.5 0 0 0 1.5-1.5v-7A1.5 1.5 0 0 0 14.5 4H7.6L5.5 2.5A1.5 1.5 0 0 0 4.4 2H1.5z"/>
+                </svg>
+                <div class="folder-context__text">
+                    <strong>{panelState.fileTree.name}</strong>
+                    <span>{panelState.fileTree.path}</span>
+                </div>
+            </div>
+            <div class="folder-actions">
+                <button
+                    class="folder-action folder-action--primary"
+                    onclick={selectAllFiles}
+                    disabled={disabled}
+                    title="Выбрать все изображения во всех вложенных папках"
+                >
+                    Выбрать всё
+                </button>
+                <button
+                    class="folder-action"
+                    onclick={clearFilesPanel}
+                    disabled={disabled}
+                    title="Убрать открытую папку и все файлы из этого окна. Файлы на диске не удаляются."
+                >
+                    Убрать всё
+                </button>
+            </div>
+            <div class="selection-summary">
+                <span>Выбрано: <strong>{panelState.selectedPaths.size}</strong></span>
+                <span>Всего: <strong>{allImagePaths(panelState.fileTree).length}</strong></span>
+            </div>
+        </div>
+    {/if}
+
     <div
         class="panel-content files-content"
         class:files-content--icons={panelState.viewMode === 'icons'}
@@ -492,6 +561,94 @@
 
         &:hover { background: var(--hover-bg); color: $text; }
         &.active { background: $chip-bg; color: $chip-text; }
+    }
+
+    .folder-context {
+        padding: 8px 8px 7px;
+        border-bottom: 1px solid $border;
+        background: var(--hover-bg);
+        flex-shrink: 0;
+    }
+
+    .folder-context__identity {
+        @include flex(row, flex-start, center);
+        gap: 7px;
+        min-width: 0;
+        margin-bottom: 7px;
+
+        > svg {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+            color: $accent;
+        }
+    }
+
+    .folder-context__text {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+
+        strong {
+            color: $text;
+            font-size: $fs-small;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        span {
+            color: $text-muted;
+            font-size: 10px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+    }
+
+    .folder-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+    }
+
+    .folder-action {
+        @include btn-reset;
+        @include flex(row, center, center);
+        min-height: 28px;
+        padding: 4px 8px;
+        border: 1px solid $border;
+        border-radius: $radius-sm;
+        background: var(--panel-bg);
+        color: $text-secondary;
+        font-size: $fs-small;
+        font-weight: 600;
+
+        &:hover:not(:disabled) {
+            background: var(--hover-bg);
+            color: $text;
+        }
+
+        &--primary {
+            background: $chip-bg;
+            color: $chip-text;
+            border-color: $accent;
+        }
+
+        &:disabled {
+            opacity: .45;
+            cursor: default;
+        }
+    }
+
+    .selection-summary {
+        @include flex(row, space-between, center);
+        margin-top: 6px;
+        color: $text-muted;
+        font-size: 10px;
+
+        strong { color: $text-secondary; }
     }
 
     // ── Content area ──
