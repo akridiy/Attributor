@@ -233,11 +233,18 @@
                             onSelectionChange?.([...newSelected]);
                         }
 
-                        // Notify parent if the active file disappeared
+                        // If an app-initiated rename changed the active path, keep the
+                        // surviving selection active instead of reporting a false "file not found".
                         if (panelState.activePath && !allPaths.has(panelState.activePath)) {
-                            panelState.activePath = '';
-                            panelState.anchorPath = '';
-                            onFileGone?.();
+                            const fallback = [...newSelected][0];
+                            if (fallback) {
+                                panelState.activePath = fallback;
+                                panelState.anchorPath = fallback;
+                            } else {
+                                panelState.activePath = '';
+                                panelState.anchorPath = '';
+                                onFileGone?.();
+                            }
                         }
                     } catch (e) {
                         console.error("scan_folder failed:", e);
@@ -317,17 +324,40 @@
         }
     }
 
-    /** Force-rescan the currently open folder after app-initiated renames. */
-    export async function refreshCurrentFolder() {
+    /**
+     * Force-rescan the currently open folder after app-initiated writes/renames.
+     * preferredPaths are the new paths returned by the backend. Applying them atomically with
+     * the refreshed tree prevents stale rows from being clickable between rename and watcher events.
+     */
+    export async function refreshCurrentFolder(preferredPaths: string[] = []): Promise<string[]> {
         const tree = panelState.fileTree;
-        if (!tree) return;
+        if (!tree) return [];
         try {
-            panelState.fileTree = await invoke<FileNode>("scan_folder", {
+            const updated = await invoke<FileNode>("scan_folder", {
                 path: tree.path,
                 gen: cacheGenConfig(),
             });
+            panelState.fileTree = updated;
+
+            const allPaths = flatFilePaths(updated);
+            const preferred = preferredPaths.filter(p => allPaths.has(p));
+            const next = preferred.length > 0
+                ? preferred
+                : [...panelState.selectedPaths].filter(p => allPaths.has(p));
+
+            panelState.selectedPaths = new Set(next);
+            if (next.length > 0) {
+                panelState.activePath = next[next.length - 1];
+                panelState.anchorPath = panelState.activePath;
+            } else {
+                panelState.activePath = '';
+                panelState.anchorPath = '';
+            }
+            onSelectionChange?.(next);
+            return next;
         } catch (e) {
             console.error("manual scan_folder failed:", e);
+            return [];
         }
     }
 
