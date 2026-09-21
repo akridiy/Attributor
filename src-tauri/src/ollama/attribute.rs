@@ -203,8 +203,8 @@ Rules:
     };
     let visual_facts = extract_json(&visual_facts_raw).to_string();
 
-    // Stage 2: validate filename/folder context against the visual evidence.
-    // Filename is strong item-specific context; folder is softer series/global context.
+    // Stage 2: text-only validation of filename/folder context against visual evidence.
+    // No image is resent here. Filename is strong item-specific context; folder is softer series/global context.
     let (folder_context, filename_context) = client::series_context(path);
     let mut context_cfg = cfg.clone();
     context_cfg.prompt = format!(
@@ -257,12 +257,12 @@ Rules:
 
     let validated_context_raw = tokio::select! {
         _ = cancelled(cancel) => return Err("cancelled".to_string()),
-        result = client::generate(&context_cfg, image.clone(), path, false) => result?,
+        result = client::generate_text(&context_cfg) => result?,
     };
     let validated_context = extract_json(&validated_context_raw).to_string();
 
-    // Stage 3: final metadata. Feed only visual facts + validated context.
-    // Raw folder/filename are deliberately NOT appended to this request.
+    // Stage 3: text-only final metadata generation from visual facts + validated context.
+    // Raw folder/filename are deliberately NOT appended to this request, and the image is not resent.
 
     let mut final_cfg = cfg.clone();
     final_cfg.prompt.push_str(
@@ -279,7 +279,7 @@ Rules:
 
     let raw = tokio::select! {
         _ = cancelled(cancel) => return Err("cancelled".to_string()),
-        result = client::generate(&final_cfg, image.clone(), path, false) => result?,
+        result = client::generate_text(&final_cfg) => result?,
     };
     let mut result = parse_result(&raw)?;
 
@@ -298,7 +298,7 @@ Rules:
         );
         let retry_raw = tokio::select! {
             _ = cancelled(cancel) => return Err("cancelled".to_string()),
-            retry = client::generate(&retry_cfg, image, path, false) => retry?,
+            retry = client::generate_text(&retry_cfg) => retry?,
         };
         result = parse_result(&retry_raw)?;
     }
