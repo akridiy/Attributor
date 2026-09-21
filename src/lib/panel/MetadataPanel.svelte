@@ -80,6 +80,22 @@
 
     // ── Ollama attribution ─────────────────────────────────────────────────
 
+    /** Convert a generated stock title into a filesystem-safe filename stem. */
+    function titleToFilename(titleText: string): string {
+        let stem = titleText
+            .trim()
+            .replace(/[<>:"/\\|?*\u0000-\u001F]/g, ' ')
+            .replace(/[^A-Za-z0-9]+/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_+|_+$/g, '');
+
+        if (stem.length > 140) stem = stem.slice(0, 140).replace(/_+$/g, '');
+        if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(stem)) {
+            stem = `stock_${stem}`;
+        }
+        return stem || 'stock_image';
+    }
+
     /** Single-photo attribution: fill the form from the model (overwrite text, append+dedupe keywords). */
     async function handleAttribute() {
         if (!ollama.available || !filepath) return;
@@ -95,6 +111,7 @@
         try {
             const r = await attributePhoto(filepath);
             title = r.title;
+            filename = titleToFilename(r.title);
             description = r.description;
             categories = r.categories.join(', ');
             editorial = r.editorial;
