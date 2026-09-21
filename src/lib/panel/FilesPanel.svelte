@@ -317,6 +317,20 @@
         }
     }
 
+    /** Force-rescan the currently open folder after app-initiated renames. */
+    export async function refreshCurrentFolder() {
+        const tree = panelState.fileTree;
+        if (!tree) return;
+        try {
+            panelState.fileTree = await invoke<FileNode>("scan_folder", {
+                path: tree.path,
+                gen: cacheGenConfig(),
+            });
+        } catch (e) {
+            console.error("manual scan_folder failed:", e);
+        }
+    }
+
     /** Reset selection to a single file (used after rename). */
     export function setSelectedPath(path: string) {
         panelState.selectedPaths = new Set([path]);
